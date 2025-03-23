@@ -2,6 +2,7 @@
 
 ## 🔥 Project Overview
 This project focuses on building a **network security monitoring system** using **Snort**, an open-source **Intrusion Detection System (IDS)**. It helps detect and log malicious activities in a network and generates alerts for potential cyber threats.
+See IDS Snort Project.pdf 
 
 ## 📌 Features
 ✅ **Real-time network traffic monitoring**  
