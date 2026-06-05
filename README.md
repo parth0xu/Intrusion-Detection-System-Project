@@ -1,171 +1,221 @@
-# Intrusion Detection System — Snort + ELK Stack
+# Snort IDS Lab — Network Intrusion Detection on Ubuntu
 
-> **Network security monitoring lab** built to detect, alert, and visualize real-time intrusion attempts using Snort IDS integrated with the ELK Stack. Simulated attacks using Nmap and Metasploit to validate custom rule effectiveness.
-
----
-
-## What This Project Does
-
-This project sets up a functional IDS environment on a Linux host that:
-
-- Monitors live network traffic and fires alerts on suspicious patterns
-- Uses **custom Snort rules** to detect specific attack signatures (port scans, SYN floods, ICMP sweeps)
-- Ships alert logs to **Elasticsearch via Logstash** and visualizes them on a **Kibana dashboard**
-- Validates detection by simulating real attacks from an attacker machine (Kali Linux)
+A hands-on implementation of Snort 2.9 as a Network Intrusion Detection System (NIDS) on Ubuntu Linux using VirtualBox. This lab demonstrates real-time traffic monitoring, custom rule creation, and alert generation against a Metasploitable 2 target machine.
 
 ---
 
-## Architecture
+## Lab Environment
 
-```
-Attacker Machine (Kali)
-        │
-        │  ← Nmap SYN scan / Metasploit exploit attempt
-        ▼
-[ Network Interface (eth0) ]
-        │
-        ▼
-   Snort IDS (Ubuntu)
-   ├── Custom rules → /etc/snort/rules/local.rules
-   ├── Alerts → /var/log/snort/alert
-        │
-        ▼
-   Logstash (log shipper)
-        │
-        ▼
-   Elasticsearch → Kibana Dashboard
-```
+| Component | Details |
+|---|---|
+| Host OS | Windows (VirtualBox host) |
+| IDS Machine | Ubuntu Linux (VirtualBox VM) |
+| Target Machine | Metasploitable 2 (VirtualBox VM) |
+| Snort Version | 2.9.20 |
+| Network Adapter | Bridged Adapter — `enp0s3` |
+| Promiscuous Mode | Allow All |
+| HOME_NET | `192.168.16.0/24` |
+
+Both VMs are on the same bridged network, allowing Snort running on Ubuntu to monitor traffic between the attacker (Metasploitable) and the IDS machine.
 
 ---
 
-## Tech Stack
-
-| Tool | Purpose |
-|------|---------|
-| Snort 2.9.x | Core IDS engine — packet inspection & alerting |
-| Wireshark | Packet capture & manual traffic analysis |
-| Nmap | Attack simulation — port scanning, OS fingerprinting |
-| Metasploit | Exploit simulation for detection validation |
-| ELK Stack (Elasticsearch + Logstash + Kibana) | Log aggregation, storage, and dashboarding |
-| Ubuntu 22.04 | IDS host OS |
-| Kali Linux | Attacker machine (VM) |
-
----
-
-## Setup & Installation
-
-### Prerequisites
-
-- Two machines (or VMs) on the same network: one Ubuntu (IDS host), one Kali (attacker)
-- At least 4GB RAM on the IDS host for ELK Stack
+## Setup & Configuration
 
 ### 1. Install Snort
 
 ```bash
-sudo apt update && sudo apt install -y snort
+sudo apt-get install snort -y
 ```
 
-Verify installation:
+During installation, two prompts appear:
+- **Interface**: Set to `enp0s3` (the active network interface — verify with `ifconfig`)
+- **HOME_NET**: Set to your subnet in CIDR notation (e.g., `192.168.2.0/24`)
+
+### 2. Enable Promiscuous Mode (VirtualBox)
+
+In VirtualBox VM settings → Network → Advanced:
+- Set **Promiscuous Mode** to `Allow All`
+
+This allows the NIC to capture all packets on the network segment, not just those addressed to the VM — essential for IDS functionality.
+
+### 3. Verify Snort Config Directory
 
 ```bash
-snort --version
+ls -al /etc/snort
 ```
 
-### 2. Configure Snort
+Key files:
+- `snort.conf` — main configuration file
+- `rules/local.rules` — where custom rules go
+- `snort.debian.conf` — Debian-specific overrides (HOME_NET defined here on Debian/Ubuntu)
 
-Set your network range in `/etc/snort/snort.conf`:
+### 4. Edit snort.conf — Set HOME_NET
 
 ```bash
-sudo nano /etc/snort/snort.conf
-# Set HOME_NET to your local subnet, e.g.:
-# var HOME_NET 192.168.1.0/24
+sudo vim /etc/snort/snort.conf
 ```
 
-### 3. Write Custom Detection Rules
-
-Add rules to `/etc/snort/rules/local.rules`:
+Find and update:
 
 ```
-# Detect Nmap SYN scan
-alert tcp any any -> $HOME_NET any (msg:"Nmap SYN Scan Detected"; flags:S; threshold:type threshold, track by_src, count 20, seconds 1; sid:1000001; rev:1;)
-
-# Detect ICMP ping sweep
-alert icmp any any -> $HOME_NET any (msg:"ICMP Ping Sweep"; itype:8; threshold:type threshold, track by_src, count 5, seconds 2; sid:1000002; rev:1;)
-
-# Detect SSH brute force attempt
-alert tcp any any -> $HOME_NET 22 (msg:"SSH Brute Force Attempt"; flow:to_server; threshold:type threshold, track by_src, count 5, seconds 60; sid:1000003; rev:1;)
+ipvar HOME_NET 192.168.16.0/24
+ipvar EXTERNAL_NET any
 ```
 
-### 4. Run Snort in IDS Mode
+This tells Snort which IP range to treat as the protected internal network.
+
+### 5. Verify local.rules is Included
+
+In `snort.conf`, confirm this line exists and is **not** commented out:
+
+```
+include $RULE_PATH/local.rules
+```
+
+### 6. Test Configuration
 
 ```bash
-sudo snort -A console -q -c /etc/snort/snort.conf -i eth0
+sudo snort -T -i enp0s3 -c /etc/snort/snort.conf
 ```
 
-### 5. Simulate an Attack (from Kali)
-
-```bash
-# SYN scan — should trigger rule 1000001
-nmap -sS 192.168.1.x
-
-# Ping sweep — should trigger rule 1000002
-nmap -sn 192.168.1.0/24
-```
-
-### 6. View Raw Alerts
-
-```bash
-cat /var/log/snort/alert
-```
+Expected output: `Snort successfully validated the configuration!`
 
 ---
 
-## ELK Stack Integration
+## Custom Rules
 
-### Ship Snort logs to Elasticsearch via Logstash
-
-Create `/etc/logstash/conf.d/snort.conf`:
-
-```
-input {
-  file {
-    path => "/var/log/snort/alert"
-    start_position => "beginning"
-  }
-}
-output {
-  elasticsearch {
-    hosts => ["localhost:9200"]
-    index => "snort-alerts-%{+YYYY.MM.dd}"
-  }
-}
-```
-
-Start Logstash:
+Rules are written in `/etc/snort/rules/local.rules`.
 
 ```bash
-sudo systemctl start logstash
+sudo vim /etc/snort/rules/local.rules
 ```
 
-Then open Kibana at `http://localhost:5601` and create an index pattern for `snort-alerts-*`.
+### Rule Syntax
+
+```
+action protocol src_ip src_port -> dst_ip dst_port (options)
+```
+
+| Field | Description |
+|---|---|
+| `action` | `alert`, `log`, `drop`, `reject` |
+| `protocol` | `tcp`, `udp`, `icmp`, `ip` |
+| `msg` | Human-readable alert message |
+| `sid` | Unique rule ID (local rules use 10000+) |
+| `rev` | Rule revision number |
 
 ---
 
-## What I Learned
+### Rules Written
 
-- How Snort's rule engine processes packets and why rule ordering matters for performance
-- Writing threshold-based rules to reduce false positives (critical in real SOC environments)
-- How to correlate IDS alerts with raw pcap data in Wireshark to confirm true positives
-- Why ELK integration matters — raw alert logs are unworkable at scale; dashboards surface patterns
+**Rule 1 — ICMP Ping Detection**
+```
+alert icmp any any -> $HOME_NET any (msg:"ICMP Ping Detected"; sid:10001; rev:1;)
+```
+Detects any ICMP echo request directed at the home network. In real scenarios, ping sweeps are used by attackers for host discovery / network reconnaissance.
+
+**Rule 2 — SSH Authentication Attempt**
+```
+alert tcp any any -> $HOME_NET 22 (msg:"SSH Authentication Attempt"; sid:10002; rev:1;)
+```
+Triggers on any TCP traffic to port 22. Useful for detecting SSH brute force attempts or unauthorized access attempts against SSH services.
+
+**Rule 3 — FTP Authentication Attempt** *(created via Snorpy 2.0)*
+```
+alert tcp any any -> $HOME_NET 21 (msg:"FTP Authentication Attempt"; sid:100003; rev:1;)
+```
+Detects connection attempts to FTP port 21. FTP transmits credentials in plaintext — any auth attempt to this port warrants logging.
 
 ---
 
-## Full Project Report
+## Running Snort in NIDS Mode
 
-For detailed methodology, screenshots, and test results: [`IDS Snort project.pdf`](./IDS%20Snort%20project.pdf)
+```bash
+sudo snort -A console -i enp0s3 -c /etc/snort/snort.conf
+```
+
+| Flag | Purpose |
+|---|---|
+| `-A console` | Print alerts to stdout in real time |
+| `-i enp0s3` | Listen on this interface |
+| `-c` | Use this config file |
 
 ---
 
-## Skills Demonstrated
+## Alert Output — Proof of Detection
 
-`Snort` `IDS/IPS` `Custom Rule Writing` `ELK Stack` `Log Analysis` `Network Traffic Analysis` `Wireshark` `Nmap` `Incident Response` `Linux`
+From Metasploitable 2, a ping sweep was run targeting the Ubuntu IDS machine:
+
+```
+msfadmin@metasploitable:~$ ping -c5 192.168.16.24
+```
+
+Snort immediately triggered the ICMP rule and logged bidirectional traffic:
+
+```
+02/10-17:15:13.623259 [**] [1:10001:1] ICMP Ping Detected [**] [Priority: 0] {ICMP} 192.168.16.120 -> 192.168.16.24
+02/10-17:15:13.623321 [**] [1:10001:1] ICMP Ping Detected [**] [Priority: 0] {ICMP} 192.168.16.24 -> 192.168.16.120
+```
+
+Each alert line contains:
+- **Timestamp** — exact time of packet
+- **Rule SID** — `[1:10001:1]` maps to our custom rule
+- **Message** — `ICMP Ping Detected`
+- **Protocol** — `{ICMP}`
+- **Source → Destination** — IP pair showing both directions
+
+---
+
+## Snorpy 2.0 — Web-Based Rule Builder
+
+[Snorpy](http://snorpy.cyb3rs3c.net/) provides a GUI for constructing Snort rules without memorizing syntax. Used here to generate the FTP detection rule. Useful for quick rule prototyping before manually refining in `local.rules`.
+
+---
+
+## Key Takeaways
+
+- **Promiscuous mode** is non-negotiable for a functional IDS — without it, the NIC drops packets not addressed to it and Snort sees nothing
+- **HOME_NET scoping** matters: rules with `-> $HOME_NET` only fire for inbound traffic; bidirectional monitoring requires `any` on both sides or separate rules
+- **SID namespacing**: SIDs below 1000000 are Snort-reserved; local custom rules should start at 1000000+ (or use 10000+ range for lab environments)
+- **Alert noise**: ICMP rules in production would generate enormous false positives — in real deployments, rules are tuned with thresholds and suppression lists
+
+---
+
+## What's Next
+
+- [ ] Add Snort 3 setup and compare rule syntax differences
+- [ ] Write rules for Nmap scan detection (SYN scan, NULL scan, XMAS scan)
+- [ ] Integrate with a SIEM (e.g., ELK stack) for log visualization
+- [ ] Test IPS mode with `inline` and `drop` actions
+- [ ] Build detection rules for common Metasploit payloads
+
+---
+
+## Screenshots
+
+| Step | Screenshot |
+|---|---|
+| Snort Installation | `01_install.png` |
+| Interface Config | `02_interface_config.png` |
+| HOME_NET Config | `03_homenet_config.png` |
+| Promiscuous Mode | `04_promiscuous_mode.png` |
+| /etc/snort Directory | `05_snort_dir.png` |
+| snort.conf HOME_NET | `06_snortconf_homenet.png` |
+| local.rules include | `07_localrules_include.png` |
+| Enabled rule categories | `08_rule_categories.png` |
+| Config self-test | `09_selftest.png` |
+| Opening local.rules | `10_open_localrules.png` |
+| Custom rules written | `11_custom_rules.png` |
+| Snorpy rule builder | `12_snorpy.png` |
+| Snort running + ping from Metasploitable | `13_snort_running.png` |
+| ICMP alerts firing | `14_icmp_alerts.png` |
+
+---
+
+## References
+
+- [Snort Official Documentation](https://www.snort.org/documents)
+- [Snort Rule Writing Guide](https://docs.snort.org/rules/)
+- [Snorpy 2.0 Web Rule Creator](http://snorpy.cyb3rs3c.net/)
+- [Metasploitable 2 Setup](https://docs.rapid7.com/metasploit/metasploitable-2/)
