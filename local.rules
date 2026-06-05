@@ -1,0 +1,42 @@
+# =============================================================================
+# local.rules — Custom Snort Detection Rules
+# Lab: Ubuntu Snort IDS | HOME_NET: 192.168.16.0/24
+# =============================================================================
+# Rule format:
+#   action proto src_ip src_port -> dst_ip dst_port (msg:"..."; sid:XXXXX; rev:N;)
+#
+# SID ranges:
+#   1       – 999999  : Snort/VRT reserved
+#   1000000+          : Local/custom rules (production)
+#   10000 – 99999     : Acceptable for lab environments
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# RULE 1: ICMP Ping Detection
+# Use case: Detect host discovery / ping sweeps (reconnaissance phase)
+# Why it matters: Attackers use ICMP echo to map live hosts before exploiting
+# Trigger: Any ICMP packet directed at the protected network
+# -----------------------------------------------------------------------------
+alert icmp any any -> $HOME_NET any (msg:"ICMP Ping Detected"; sid:10001; rev:1;)
+
+
+# -----------------------------------------------------------------------------
+# RULE 2: SSH Authentication Attempt
+# Use case: Detect SSH brute force or unauthorized access attempts
+# Why it matters: Port 22 is a primary target for credential stuffing attacks
+# Trigger: Any TCP connection attempt to port 22 on HOME_NET
+# Note: In production, pair with threshold to suppress false positives
+#   threshold: type both, track by_src, count 5, seconds 60
+# -----------------------------------------------------------------------------
+alert tcp any any -> $HOME_NET 22 (msg:"SSH Authentication Attempt"; sid:10002; rev:1;)
+
+
+# -----------------------------------------------------------------------------
+# RULE 3: FTP Authentication Attempt
+# Use case: Detect FTP connection attempts (plaintext protocol)
+# Why it matters: FTP sends credentials in cleartext — any auth is a risk
+# Trigger: Any TCP connection attempt to port 21 on HOME_NET
+# Generated with: Snorpy 2.0 (http://snorpy.cyb3rs3c.net/)
+# -----------------------------------------------------------------------------
+alert tcp any any -> $HOME_NET 21 (msg:"FTP Authentication Attempt"; sid:100003; rev:1;)
